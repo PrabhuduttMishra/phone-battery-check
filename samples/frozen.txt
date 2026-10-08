@@ -1,0 +1,13 @@
+Current Battery Service state:
+  (UPDATES STOPPED -- use 'reset' to restart)
+  AC powered: true
+  USB powered: false
+  Wireless powered: false
+  status: 5
+  health: 2
+  present: true
+  level: 100
+  scale: 100
+  voltage: 4380
+  temperature: 250
+  technology: Li-ion
