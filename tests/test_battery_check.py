@@ -135,6 +135,30 @@ def test_a_named_serial_must_be_ready():
         bc.pick_device(HEADER + "A1\tdevice\n", "C3")
 
 
+def test_a_linux_permission_problem_points_at_udev_not_the_cable():
+    listing = ("R58N123\tno permissions (user archi is not in the plugdev group); "
+               "see [http://developer.android.com/tools/device.html]\n")
+    with pytest.raises(bc.CheckError) as err:
+        bc.pick_device(HEADER + listing)
+    msg = str(err.value)
+    assert "plugdev" in msg and "udev" in msg
+    assert "but no." not in msg and "cable" not in msg
+
+
+def test_adb_daemon_start_lines_are_not_phones():
+    out = ("* daemon not running; starting now at tcp:5037\n"
+           "* daemon started successfully\n"
+           + HEADER + "R58N123\tdevice\n")
+    assert bc.pick_device(out) == "R58N123"
+    with pytest.raises(bc.CheckError, match="No phone found"):
+        bc.pick_device("* daemon started successfully\n" + HEADER)
+
+
+def test_a_named_serial_that_is_unauthorized_gets_the_allow_advice():
+    with pytest.raises(bc.CheckError, match="Allow USB debugging"):
+        bc.pick_device(HEADER + "A1\tdevice\nB2\tunauthorized\n", "B2")
+
+
 # --- end to end, with adb replaced -------------------------------------------
 
 def fake_adb(responses):

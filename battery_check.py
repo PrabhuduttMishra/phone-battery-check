@@ -183,16 +183,35 @@ def find_adb(explicit: str | None = None) -> str:
                      "its folder on PATH, or pass --adb PATH.")
 
 
+def _not_ready(state: str) -> CheckError:
+    """Advice for a phone that `adb devices` lists but cannot use yet."""
+    if state == "unauthorized":
+        return CheckError("The phone has not allowed this computer yet. Unlock it and accept "
+                          "the 'Allow USB debugging?' prompt, then run this again.")
+    if state.startswith("no permissions"):
+        return CheckError("adb has no permission to open the phone (" + state + "). On Linux, "
+                          "add your user to the plugdev group and install udev rules for "
+                          "Android phones, then log in again and reconnect the phone.")
+    return CheckError(f"The phone is connected but {state}. Reconnect the cable and try again.")
+
+
 def pick_device(devices_output: str, wanted: str | None = None) -> str:
     """Choose the phone from `adb devices` output."""
     ready, waiting = [], []
-    for line in devices_output.splitlines()[1:]:
-        parts = line.split()
-        if len(parts) >= 2:
-            (ready if parts[1] == "device" else waiting).append((parts[0], parts[1]))
+    for line in devices_output.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("*", "List of devices")):
+            continue  # adb's own messages, e.g. "* daemon started successfully"
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            serial, state = parts[0], parts[1].strip()
+            (ready if state == "device" else waiting).append((serial, state))
     if wanted:
         if any(serial == wanted for serial, _ in ready):
             return wanted
+        for serial, state in waiting:
+            if serial == wanted:
+                raise _not_ready(state)
         listed = ", ".join(s for s, _ in ready + waiting) or "nothing"
         raise CheckError(f"No ready phone with serial {wanted}. `adb devices` lists: {listed}")
     if len(ready) == 1:
@@ -200,12 +219,11 @@ def pick_device(devices_output: str, wanted: str | None = None) -> str:
     if len(ready) > 1:
         listed = ", ".join(s for s, _ in ready)
         raise CheckError(f"Several phones are connected ({listed}). Choose one with -s SERIAL.")
-    if any(state == "unauthorized" for _, state in waiting):
-        raise CheckError("The phone has not allowed this computer yet. Unlock it and accept "
-                         "the 'Allow USB debugging?' prompt, then run this again.")
+    for _, state in waiting:
+        if state == "unauthorized":
+            raise _not_ready(state)
     if waiting:
-        raise CheckError(f"The phone is connected but {waiting[0][1]}. "
-                         "Reconnect the cable and try again.")
+        raise _not_ready(waiting[0][1])
     raise CheckError("No phone found. On the phone: Settings > About phone > tap 'Build "
                      "number' seven times, then Developer options > USB debugging on. Connect "
                      "it with a data cable (some cables only charge).")
