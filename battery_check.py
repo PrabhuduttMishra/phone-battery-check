@@ -12,6 +12,7 @@ prints it. Nothing is changed on the phone and nothing leaves this computer.
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import os
 import shutil
@@ -182,16 +183,35 @@ def find_adb(explicit: str | None = None) -> str:
                      "its folder on PATH, or pass --adb PATH.")
 
 
+def _not_ready(state: str) -> CheckError:
+    """Advice for a phone that `adb devices` lists but cannot use yet."""
+    if state == "unauthorized":
+        return CheckError("The phone has not allowed this computer yet. Unlock it and accept "
+                          "the 'Allow USB debugging?' prompt, then run this again.")
+    if state.startswith("no permissions"):
+        return CheckError("adb has no permission to open the phone (" + state + "). On Linux, "
+                          "add your user to the plugdev group and install udev rules for "
+                          "Android phones, then log in again and reconnect the phone.")
+    return CheckError(f"The phone is connected but {state}. Reconnect the cable and try again.")
+
+
 def pick_device(devices_output: str, wanted: str | None = None) -> str:
     """Choose the phone from `adb devices` output."""
     ready, waiting = [], []
-    for line in devices_output.splitlines()[1:]:
-        parts = line.split()
-        if len(parts) >= 2:
-            (ready if parts[1] == "device" else waiting).append((parts[0], parts[1]))
+    for line in devices_output.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("*", "List of devices")):
+            continue  # adb's own messages, e.g. "* daemon started successfully"
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            serial, state = parts[0], parts[1].strip()
+            (ready if state == "device" else waiting).append((serial, state))
     if wanted:
         if any(serial == wanted for serial, _ in ready):
             return wanted
+        for serial, state in waiting:
+            if serial == wanted:
+                raise _not_ready(state)
         listed = ", ".join(s for s, _ in ready + waiting) or "nothing"
         raise CheckError(f"No ready phone with serial {wanted}. `adb devices` lists: {listed}")
     if len(ready) == 1:
@@ -199,12 +219,11 @@ def pick_device(devices_output: str, wanted: str | None = None) -> str:
     if len(ready) > 1:
         listed = ", ".join(s for s, _ in ready)
         raise CheckError(f"Several phones are connected ({listed}). Choose one with -s SERIAL.")
-    if any(state == "unauthorized" for _, state in waiting):
-        raise CheckError("The phone has not allowed this computer yet. Unlock it and accept "
-                         "the 'Allow USB debugging?' prompt, then run this again.")
+    for _, state in waiting:
+        if state == "unauthorized":
+            raise _not_ready(state)
     if waiting:
-        raise CheckError(f"The phone is connected but {waiting[0][1]}. "
-                         "Reconnect the cable and try again.")
+        raise _not_ready(waiting[0][1])
     raise CheckError("No phone found. On the phone: Settings > About phone > tap 'Build "
                      "number' seven times, then Developer options > USB debugging on. Connect "
                      "it with a data cable (some cables only charge).")
@@ -266,6 +285,14 @@ def render(b: Battery) -> str:
     return "\n".join(lines)
 
 
+def read_saved_report(path: Path) -> str:
+    """Read a saved report. Windows PowerShell 5.1 `>` writes UTF-16 with a BOM."""
+    raw = path.read_bytes()
+    if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return raw.decode("utf-16", errors="replace")
+    return raw.decode("utf-8-sig", errors="replace")
+
+
 def main(argv: list | None = None, run: Runner = _default_run) -> int:
     ap = argparse.ArgumentParser(description="Check an Android phone's battery over USB (adb).")
     ap.add_argument("-s", "--serial", help="which phone, when several are connected")
@@ -275,7 +302,7 @@ def main(argv: list | None = None, run: Runner = _default_run) -> int:
     args = ap.parse_args(argv)
     try:
         if args.file:
-            b = parse_dumpsys(args.file.read_text(encoding="utf-8", errors="replace"))
+            b = parse_dumpsys(read_saved_report(args.file))
         else:
             b = read_phone(find_adb(args.adb), args.serial, run)
         add_notes(b)
