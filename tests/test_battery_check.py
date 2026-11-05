@@ -190,3 +190,16 @@ def test_a_saved_report_can_be_read_from_a_file(capsys):
     assert "overheat" in out
     # a saved report never holds the kernel files, so it must not blame the phone
     assert "does not share" not in out
+
+
+@pytest.mark.parametrize("encoding, bom", [
+    ("utf-16-le", b"\xff\xfe"),  # what `>` writes in Windows PowerShell 5.1
+    ("utf-16-be", b"\xfe\xff"),
+    ("utf-8", b"\xef\xbb\xbf"),  # PowerShell 7 `Out-File -Encoding utf8BOM`
+])
+def test_a_saved_report_in_another_encoding_is_read(tmp_path, capsys, encoding, bom):
+    saved = tmp_path / "myphone.dump.txt"
+    saved.write_bytes(bom + sample("charging.txt").encode(encoding))
+    assert bc.main(["--file", str(saved), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["percent"] == 78 and data["status"] == "charging"

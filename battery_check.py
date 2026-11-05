@@ -12,6 +12,7 @@ prints it. Nothing is changed on the phone and nothing leaves this computer.
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import os
 import shutil
@@ -266,6 +267,14 @@ def render(b: Battery) -> str:
     return "\n".join(lines)
 
 
+def read_saved_report(path: Path) -> str:
+    """Read a saved report. Windows PowerShell 5.1 `>` writes UTF-16 with a BOM."""
+    raw = path.read_bytes()
+    if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return raw.decode("utf-16", errors="replace")
+    return raw.decode("utf-8-sig", errors="replace")
+
+
 def main(argv: list | None = None, run: Runner = _default_run) -> int:
     ap = argparse.ArgumentParser(description="Check an Android phone's battery over USB (adb).")
     ap.add_argument("-s", "--serial", help="which phone, when several are connected")
@@ -275,7 +284,7 @@ def main(argv: list | None = None, run: Runner = _default_run) -> int:
     args = ap.parse_args(argv)
     try:
         if args.file:
-            b = parse_dumpsys(args.file.read_text(encoding="utf-8", errors="replace"))
+            b = parse_dumpsys(read_saved_report(args.file))
         else:
             b = read_phone(find_adb(args.adb), args.serial, run)
         add_notes(b)
